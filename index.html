@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>抽奖转盘</title>
+  <style>
+    :root{
+      --bg:#0b0f17;
+      --card:#0f1720;
+      --accent1:linear-gradient(90deg,#ff7a18,#af002d);
+      --glass:rgba(255,255,255,0.06);
+      --muted:rgba(255,255,255,0.6);
+    }
+    html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;}
+    body{background:var(--bg);color:#e6eef8;overflow:hidden;}
+    .wrap{position:relative;height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}
+    canvas#stars{position:fixed;inset:0;z-index:0}
+
+    .panel{position:relative;z-index:2;display:flex;gap:28px;align-items:center}
+
+    .wheel-wrap{width:560px;height:560px;display:flex;align-items:center;justify-content:center;position:relative}
+    .wheel-canvas{width:100%;height:100%;border-radius:999px;box-shadow:0 10px 40px rgba(3,8,15,0.6),inset 0 2px 10px rgba(255,255,255,0.02);background:conic-gradient(from 180deg at 50% 50%,rgba(255,255,255,0.02),transparent);transform-origin:center center}
+
+    .pointer{position:absolute;top:-24px;left:50%;transform:translateX(-50%);width:0;height:0;z-index:4}
+    .pointer svg{filter:drop-shadow(0 6px 10px rgba(0,0,0,0.6))}
+
+    .controls{display:flex;flex-direction:column;gap:12px;align-items:center;width:300px}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));border-radius:16px;padding:18px;min-width:280px;backdrop-filter:blur(6px);box-shadow:0 6px 30px rgba(2,6,12,0.6)}
+
+    .btn{appearance:none;border:0;padding:14px 20px;border-radius:12px;background:var(--accent1);color:#fff;font-weight:600;cursor:pointer;box-shadow:0 10px 30px rgba(175,0,45,0.18);transition:transform .12s ease,filter .12s ease}
+    .btn:active{transform:translateY(1px)}
+    .btn:disabled{opacity:.5;cursor:not-allowed;transform:none;filter:grayscale(.3)}
+
+    .btn.shake{animation:shake .35s}
+    @keyframes shake{0%{transform:translateX(0)}25%{transform:translateX(-6px)}50%{transform:translateX(6px)}75%{transform:translateX(-4px)}100%{transform:translateX(0)}}
+
+    .title{font-size:18px;font-weight:700;margin:0 0 6px 0}
+    .muted{color:var(--muted);font-size:13px}
+
+    .history{max-height:220px;overflow:auto;margin-top:8px;padding:8px;border-radius:8px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent)}
+    .history-item{padding:8px;border-bottom:1px dashed rgba(255,255,255,0.03);font-size:14px}
+
+    .modal-backdrop{position:fixed;inset:0;background:linear-gradient(180deg,rgba(2,6,12,0.6),rgba(2,6,12,0.85));display:none;align-items:center;justify-content:center;z-index:40}
+    .modal{background:#fff;color:#0b1220;border-radius:14px;padding:22px;min-width:320px;max-width:420px;box-shadow:0 30px 80px rgba(2,6,12,0.6);text-align:center}
+    .modal h3{margin:0 0 12px 0}
+    .claim{display:inline-block;margin-top:16px;padding:12px 18px;border-radius:10px;background:linear-gradient(90deg,#ff6a88,#ffb86b);color:#fff;font-weight:700;cursor:pointer;transform-origin:center;box-shadow:0 10px 30px rgba(255,110,136,0.12)}
+
+    .pulse{animation:pulse 1s infinite cubic-bezier(.5,0,.5,1)}
+    @keyframes pulse{0%{transform:scale(1);box-shadow:0 6px 30px rgba(255,120,120,0.18)}50%{transform:scale(1.06);box-shadow:0 12px 40px rgba(255,140,120,0.26)}100%{transform:scale(1);box-shadow:0 6px 30px rgba(255,120,120,0.18)}}
+
+    @media(max-width:900px){
+      .panel{flex-direction:column}
+      .wheel-wrap{width:420px;height:420px}
+      .controls{width:100%}
+    }
+  </style>
+</head>
+<body>
+  <canvas id="stars"></canvas>
+  <div class="wrap">
+    <div class="panel">
+      <div class="wheel-wrap">
+        <div id="pointerEl" class="pointer" aria-hidden style="position:absolute;left:50%;transform:translateX(-50%);z-index:6;pointer-events:none">
+          <svg id="pointerSvg" width="48" height="64" viewBox="0 0 48 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- 箭尖朝下，放置在转盘上沿，尖端指向圆心 -->
+            <g transform="rotate(180 24 32)">
+              <path d="M24 0L48 48H0L24 0Z" fill="#ff4757"/>
+              <circle cx="24" cy="36" r="6" fill="#fff" opacity="0.18"/>
+            </g>
+          </svg>
+        </div>
+        <canvas id="wheel" class="wheel-canvas" width="800" height="800"></canvas>
+      </div>
+
+      <div class="controls">
+        <div class="card">
+          <div class="title">抽奖转盘</div>
+          <div class="muted">剩余次数：<span id="attempts">3</span></div>
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <button id="startBtn" class="btn">开始抽奖</button>
+            <button id="redeemBtn" class="btn" style="background:linear-gradient(90deg,#2b90ff,#6ad7ff)">兑换码</button>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="historyBtn" class="btn" style="background:linear-gradient(90deg,#3b82f6,#06b6d4);padding:10px 14px;border-radius:10px">查看中奖记录<span id="historyBadge" style="margin-left:8px;background:rgba(255,255,255,0.12);padding:4px 8px;border-radius:999px;font-weight:700"></span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalBackdrop" class="modal-backdrop">
+    <div class="modal" id="winModal" role="dialog" aria-modal="true" style="position:relative">
+      <button id="winCloseX" aria-label="关闭" style="position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:20px;cursor:pointer;color:#667"><strong>×</strong></button>
+      <h3 id="winTitle">恭喜中奖</h3>
+      <div id="winPrize" style="font-size:20px;font-weight:700;margin-top:6px"></div>
+      <div style="margin-top:18px">
+        <div id="claimBtn" class="claim pulse">立即领取</div>
+      </div>
+      <div style="margin-top:14px"><button id="modalClose" class="btn" style="background:linear-gradient(90deg,#667eea,#764ba2);margin-top:8px">我知道了</button></div>
+    </div>
+  </div>
+
+  <!-- 中奖记录弹窗 -->
+  <div id="historyBackdrop" class="modal-backdrop">
+    <div class="modal" style="max-width:520px;min-width:320px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 style="margin:0">中奖记录</h3>
+        <div>
+          <button id="claimAllBtn" class="btn" style="background:linear-gradient(90deg,#ff7a18,#ffb86b);padding:8px 10px;border-radius:8px;margin-right:8px">一键领取</button>
+          <button id="historyClose" class="btn" style="background:transparent;color:#333;padding:6px 8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06)">关闭</button>
+        </div>
+      </div>
+      <div id="historyList" style="max-height:360px;overflow:auto;padding-top:6px"></div>
+    </div>
+  </div>
+
+  <script>
+    // 配置
+    const SECTORS = 20;
+    const SECTOR_ANGLE = 360 / SECTORS; // 18 deg
+    const prizes = Array.from({length:SECTORS}).map((_,i)=>{
+      const names = ['爱芬手机','iPhone 9 ProMax','讲解时内裤','假币','塑料袋','屁','优惠券','金辉的胸罩','红包','zmjjkk','随机礼物','精美礼品','幸运奖','参与奖','神秘礼物','超值券','折扣码','玩偶','饮品券','谢谢参与'];
+      return names[i%names.length] + (i===0? ' (超级)' : '');
+    });
+
+    const CODES = {"CODE3":3,"CODE10":10,"CODE20":20,"CODE9999":9999};
+    const KEY_HISTORY = 'lottery_history_v1';
+    const KEY_ATTEMPTS = 'lottery_attempts_v1';
+    const KEY_USED_CODES = 'lottery_used_codes_v1';
+    // 内置指定奖项（可在此处修改为你需要的索引数组，0-based）
+    // 例如：const BUILT_IN_ALLOWED = [0,3]; 表示中奖只会在索引 0 或 3 出现
+    const BUILT_IN_ALLOWED = [2,7,9]; // 内裤(2), 金辉的胸罩(7), zmjjkk(9)
+    // 如果未设置 BUILT_IN_ALLOWED 则可在控制台动态调用 setAllowedPrizeIndices([...])
+    let allowedPrizeIndices = (Array.isArray(BUILT_IN_ALLOWED) && BUILT_IN_ALLOWED.length>0) ? BUILT_IN_ALLOWED.slice() : null;
+    const specialIndex = 0;
+
+    const canvas = document.getElementById('wheel');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const redeemBtn = document.getElementById('redeemBtn');
+    const historyBtn = document.getElementById('historyBtn');
+    const historyBadge = document.getElementById('historyBadge');
+    const attemptsEl = document.getElementById('attempts');
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const winPrize = document.getElementById('winPrize');
+    const winTitle = document.getElementById('winTitle');
+    const claimBtn = document.getElementById('claimBtn');
+    const modalClose = document.getElementById('modalClose');
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = AudioCtx ? new AudioCtx() : null;
+    function playWinTone(){
+      if(!audioCtx) return;
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(880, audioCtx.currentTime);
+      g.gain.setValueAtTime(0, audioCtx.currentTime);
+      g.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime+0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+1.2);
+      o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+1.2);
+    }
+
+    function loadState(){
+      const hist = JSON.parse(localStorage.getItem(KEY_HISTORY) || '[]');
+      const att = parseInt(localStorage.getItem(KEY_ATTEMPTS) || '3',10);
+      const used = JSON.parse(localStorage.getItem(KEY_USED_CODES) || '{}');
+      updateHistoryBadge(hist);
+      attemptsEl.textContent = att;
+      return {hist,att,used};
+    }
+    function saveHistory(hist){localStorage.setItem(KEY_HISTORY, JSON.stringify(hist)); updateHistoryBadge(hist);}    
+    function saveAttempts(n){localStorage.setItem(KEY_ATTEMPTS, String(n));attemptsEl.textContent=n}
+    function saveUsedCodes(obj){localStorage.setItem(KEY_USED_CODES, JSON.stringify(obj));}
+    function updateHistoryBadge(list){
+      const c = (list||[]).length || 0;
+      historyBadge.textContent = c;
+      historyBadge.style.display = c? 'inline-block':'none';
+    }
+
+    // 历史记录窗口渲染
+    function renderHistoryList(){
+      const hist = JSON.parse(localStorage.getItem(KEY_HISTORY) || '[]');
+      const wrap = document.getElementById('historyList');
+      if(!wrap) return;
+      if(hist.length===0){wrap.innerHTML = '<div style="padding:12px;color:#666">暂无抽奖记录</div>';return}
+      wrap.innerHTML = '';
+      hist.slice().reverse().forEach((it,revIdx)=>{
+        const idx = hist.length-1-revIdx;
+        const div = document.createElement('div');div.className='history-entry';div.style.display='flex';div.style.justifyContent='space-between';div.style.alignItems='center';div.style.padding='8px 0';div.style.borderBottom='1px solid rgba(0,0,0,0.06)';
+        const left = document.createElement('div');left.innerHTML = `<div style="font-weight:700">${it.prize}</div><div style="font-size:12px;color:#666">${it.time}</div>`;
+        const right = document.createElement('div');
+        if(it.claimed){
+          const span = document.createElement('span');span.textContent='已领取';span.style.color='#10b981';span.style.fontWeight='700';right.appendChild(span);
+        }else{
+          const btn = document.createElement('button');btn.textContent='领取';btn.className='btn';btn.style.padding='8px 12px';btn.onclick = ()=>{claimSingle(idx)};right.appendChild(btn);
+        }
+        div.appendChild(left);div.appendChild(right);wrap.appendChild(div);
+      });
+    }
+
+    function claimSingle(index){
+      const hist = JSON.parse(localStorage.getItem(KEY_HISTORY) || '[]');
+      if(!hist[index] || hist[index].claimed) return;
+      hist[index].claimed = true; saveHistory(hist); renderHistoryList(); alert('请联系管理员发放');
+    }
+
+    function claimAll(){
+      const hist = JSON.parse(localStorage.getItem(KEY_HISTORY) || '[]');
+      let changed=false; for(const it of hist){if(!it.claimed){it.claimed=true;changed=true}}
+      if(changed){saveHistory(hist);renderHistoryList(); alert('请联系管理员发放');}else{alert('没有可领取的奖品');}
+    }
+
+    function drawWheel(){
+      const w = canvas.width = canvas.clientWidth*2;
+      const h = canvas.height = canvas.clientHeight*2;
+      const cx = w/2, cy = h/2, r = Math.min(w,h)/2 - 10;
+      ctx.clearRect(0,0,w,h);
+      for(let i=0;i<SECTORS;i++){
+        const start = (i*SECTOR_ANGLE-90) * Math.PI/180;
+        const end = ((i+1)*SECTOR_ANGLE-90) * Math.PI/180;
+        const hue = Math.round(360 * i / SECTORS);
+        ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,start,end);ctx.closePath();
+        ctx.fillStyle = `hsl(${hue} 65% 48% / 1)`;ctx.fill();
+        ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r*0.78,start,end);ctx.closePath();ctx.fillStyle='rgba(0,0,0,0.04)';ctx.fill();
+        ctx.save();ctx.translate(cx,cy);const ang = (start+end)/2;ctx.rotate(ang);ctx.textAlign='center';ctx.fillStyle='#fff';ctx.font = `${28}px sans-serif`;ctx.fillText(prizes[i], r*0.86, 10);ctx.restore();
+      }
+      ctx.beginPath();ctx.arc(cx,cy,r*0.22,0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fill();
+    }
+
+    let spinning=false;let currentRotation = 0;
+    function animateTo(targetDeg, duration=6000, specialDeg=null){
+      if(spinning) return Promise.reject('busy');
+      spinning=true; startBtn.disabled=true; startBtn.classList.remove('shake');
+      const start = performance.now();
+      const from = currentRotation;
+
+      // 如果没有 specialDeg，使用单段平滑缓动
+      if(specialDeg === null){
+        function easeOutCubic(x){ return 1 - Math.pow(1 - x, 3); }
+        return new Promise(resolve=>{
+          function frame(now){
+            const t = now - start; const p = Math.max(0, Math.min(1, t / duration)); const eased = easeOutCubic(p);
+            const angle = from + (targetDeg - from) * eased;
+            currentRotation = angle; canvas.style.transform = `rotate(${currentRotation}deg)`;
+            if(p<1) requestAnimationFrame(frame); else { currentRotation = targetDeg; canvas.style.transform = `rotate(${currentRotation}deg)`; spinning=false; startBtn.disabled=false; resolve(); }
+          }
+          requestAnimationFrame(frame);
+        });
+      }
+
+      // 有 specialDeg 时实现“差点中大奖”分段节奏
+      // 阶段划分：快到 special 前一点 -> 极慢靠近 special 中心 -> 快速穿过 special -> 缓慢滑入目标
+      const preOffset = SECTOR_ANGLE * 0.15; // 在 special 前的微小提前角
+      const midStart = specialDeg - preOffset;
+      const midCenter = specialDeg; // 特殊区域中心
+      const midEnd = specialDeg + preOffset;
+
+      // 计算阶段时长占比
+      const d1 = duration * 0.45; // 快速到 special 前
+      const d2 = duration * 0.30; // 极慢靠近 special
+      const d3 = duration * 0.05; // 快速穿过 special
+      const d4 = duration - (d1 + d2 + d3); // 最后的缓慢停靠
+
+      function easeOutCubic(x){ return 1 - Math.pow(1 - x, 3); }
+      function easeInOutQuad(x){ return x<0.5 ? 2*x*x : 1 - Math.pow(-2*x+2,2)/2; }
+      function easeOutQuad(x){ return 1 - (1-x)*(1-x); }
+
+      return new Promise(resolve=>{
+        function frame(now){
+          const t = now - start;
+          if(t <= d1){
+            const p = Math.max(0, Math.min(1, t / d1));
+            const eased = easeOutCubic(p);
+            const angle = from + (midStart - from) * eased;
+            currentRotation = angle; canvas.style.transform = `rotate(${currentRotation}deg)`;
+            requestAnimationFrame(frame); return;
+          }
+          if(t <= d1 + d2){
+            const tt = t - d1; const p = Math.max(0, Math.min(1, tt / d2)); const eased = easeInOutQuad(p);
+            const angle = midStart + (midCenter - midStart) * eased;
+            currentRotation = angle; canvas.style.transform = `rotate(${currentRotation}deg)`;
+            requestAnimationFrame(frame); return;
+          }
+          if(t <= d1 + d2 + d3){
+            const tt = t - d1 - d2; const p = Math.max(0, Math.min(1, tt / d3)); const eased = easeOutQuad(p);
+            const angle = midCenter + (midEnd - midCenter) * eased;
+            currentRotation = angle; canvas.style.transform = `rotate(${currentRotation}deg)`;
+            requestAnimationFrame(frame); return;
+          }
+          // 最后阶段
+          const tt = t - d1 - d2 - d3; const p = Math.max(0, Math.min(1, tt / d4)); const eased = easeOutCubic(p);
+          const angle = midEnd + (targetDeg - midEnd) * eased;
+          currentRotation = angle; canvas.style.transform = `rotate(${currentRotation}deg)`;
+          if(t < duration){ requestAnimationFrame(frame); } else { currentRotation = targetDeg; canvas.style.transform = `rotate(${currentRotation}deg)`; spinning=false; startBtn.disabled=false; resolve(); }
+        }
+        requestAnimationFrame(frame);
+      });
+    }
+
+    function computeTargetRotation(targetIndex){
+      // 保证每次目标角度都大于当前角度（始终顺时针旋转），同时对最终停位做中心对齐。
+      // 计算扇区中心的相对角度偏移（相对于0度）：centerOffset = (i+0.5)*SECTOR_ANGLE
+      const centerOffset = (targetIndex + 0.5) * SECTOR_ANGLE;
+      const base = - centerOffset; // 使该扇区中心对齐顶部需要的基准角（可能为负）
+      // 确保在当前角度之上至少多转 minExtra 圈，增加随机性
+      const minExtra = 6; // 最少额外圈数，保证视觉圈数
+      const extraVar = Math.floor(Math.random()*3); // 0..2 额外随机圈
+      const currentFull = Math.floor(currentRotation / 360);
+      const targetFull = currentFull + minExtra + extraVar;
+      const targetDeg = targetFull * 360 + base;
+      return targetDeg;
+    }
+
+    async function onStart(){
+      const state = loadState();
+      let attempts = parseInt(localStorage.getItem(KEY_ATTEMPTS) || '3',10);
+      if(attempts<=0){ alert('抽奖机会用光，可使用兑换码兑换次数'); return }
+
+      let chosenIndex;
+      if(Array.isArray(allowedPrizeIndices) && allowedPrizeIndices.length>0){
+        chosenIndex = allowedPrizeIndices[Math.floor(Math.random()*allowedPrizeIndices.length)];
+      }else{
+        chosenIndex = Math.floor(Math.random()*SECTORS);
+      }
+
+      const target = computeTargetRotation(chosenIndex);
+      const targetFull = Math.floor(target/360);
+      // special = 目标前一扇区（prev index）中心位置，满足“大奖为我指定选项的前一个”的要求
+      const prevIndex = (chosenIndex - 1 + SECTORS) % SECTORS;
+      const specialCenter = (prevIndex + 0.5) * SECTOR_ANGLE;
+      const specialBase = - specialCenter;
+      const specialDeg = (targetFull - 1) * 360 + specialBase;
+
+      startBtn.disabled=true; startBtn.classList.add('shake');
+      try{ await animateTo(target, 5500, specialDeg); }catch(e){ console.error(e) }
+      startBtn.classList.remove('shake');
+
+      attempts -= 1; saveAttempts(attempts);
+      const hist = JSON.parse(localStorage.getItem(KEY_HISTORY) || '[]');
+      const timeStr = new Date().toLocaleString();
+      hist.push({time:timeStr,prize:prizes[chosenIndex],claimed:false});
+      saveHistory(hist);
+      renderHistoryList();
+
+      winPrize.textContent = prizes[chosenIndex];
+      winTitle.textContent = '恭喜中奖！';
+      modalBackdrop.style.display='flex';
+      playWinTone();
+    }
+
+    // 中奖弹窗：立即领取或关闭
+    claimBtn.addEventListener('click', ()=>{
+      const hist = JSON.parse(localStorage.getItem(KEY_HISTORY) || '[]');
+      if(hist.length===0){alert('无可领取记录');return}
+      const idx = hist.length - 1;
+      if(!hist[idx].claimed){hist[idx].claimed = true; saveHistory(hist); renderHistoryList();}
+      alert('请联系管理员发放');
+      modalBackdrop.style.display='none';
+    });
+    modalClose.addEventListener('click', ()=>{modalBackdrop.style.display='none'});
+    document.getElementById('winCloseX').addEventListener('click', ()=>{modalBackdrop.style.display='none'});
+    modalBackdrop.addEventListener('click',(e)=>{if(e.target===modalBackdrop){modalBackdrop.style.display='none'}});
+
+    // 兑换码
+    redeemBtn.addEventListener('click', ()=>{
+      const code = prompt('请输入兑换码');if(!code) return;const key = code.trim().toUpperCase();const used = JSON.parse(localStorage.getItem(KEY_USED_CODES) || '{}');if(used[key]){alert('该兑换码已使用过（每设备仅能使用一次）');return}if(CODES[key]){const add = CODES[key];let attempts = parseInt(localStorage.getItem(KEY_ATTEMPTS) || '3',10);attempts += add; saveAttempts(attempts); used[key]=true; saveUsedCodes(used); alert(`兑换成功，获得 ${add} 次抽奖机会`);}else alert('无效兑换码');});
+
+    startBtn.addEventListener('click', onStart);
+
+    // 历史弹窗交互
+    historyBtn.addEventListener('click', ()=>{document.getElementById('historyBackdrop').style.display='flex'; renderHistoryList();});
+    document.getElementById('historyClose').addEventListener('click', ()=>{document.getElementById('historyBackdrop').style.display='none'});
+    document.getElementById('historyBackdrop').addEventListener('click',(e)=>{if(e.target.id==='historyBackdrop'){document.getElementById('historyBackdrop').style.display='none'}});
+    document.getElementById('claimAllBtn').addEventListener('click', ()=>{claimAll();});
+
+    const starCanvas = document.getElementById('stars');
+    const sctx = starCanvas.getContext('2d');
+    let stars=[];
+    // 指针定位：将指针放置在转盘顶部外沿，尖端指向圆心
+    const pointerEl = document.getElementById('pointerEl');
+    function placePointerAtRim(){
+      if(!pointerEl) return;
+      const wrap = canvas.parentElement; // .wheel-wrap
+      const cw = wrap.clientWidth;
+      const ch = wrap.clientHeight;
+      const centerY = ch/2;
+      const radius = Math.min(cw,ch)/2;
+      const svg = document.getElementById('pointerSvg');
+      const svgH = svg ? svg.clientHeight || 64 : 64;
+      const offset = 6; // 微调，正值让指针更靠远离轮盘
+      // 计算 pointer.top，使得 svg 底部（尖端）位于圆边缘（centerY - radius)
+      const pointerTop = (centerY - radius) - svgH + offset;
+      pointerEl.style.top = `${pointerTop}px`;
+      pointerEl.style.left = `50%`;
+      pointerEl.style.transform = 'translateX(-50%)';
+    }
+    function initStars(){starCanvas.width = innerWidth; starCanvas.height = innerHeight;stars = Array.from({length:120}).map(()=>({x:Math.random()*starCanvas.width,y:Math.random()*starCanvas.height,r:Math.random()*1.2+0.2,a:Math.random()*0.8+0.2,d:Math.random()*0.02+0.005}));}
+    function tickStars(){sctx.clearRect(0,0,starCanvas.width,starCanvas.height);for(const s of stars){s.a += (Math.random()-0.5)*s.d;s.a = Math.max(0.1,Math.min(1,s.a));sctx.beginPath();sctx.fillStyle = `rgba(255,255,255,${s.a})`;sctx.arc(s.x,s.y,s.r,0,Math.PI*2);sctx.fill();}requestAnimationFrame(tickStars);}window.addEventListener('resize', ()=>{initStars();drawWheel();placePointerAtRim();});
+
+    // 暴露接口以指定奖项索引（外部可以调用）
+    window.setAllowedPrizeIndices = function(arr){ if(Array.isArray(arr) && arr.length>0){ allowedPrizeIndices = arr.slice(); } else { allowedPrizeIndices = null; } }
+
+    drawWheel(); initStars(); tickStars(); placePointerAtRim(); const st = loadState();
+  </script>
+</body>
+</html>
